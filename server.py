@@ -1,3 +1,5 @@
+import eventlet
+eventlet.monkey_patch()
 from flask import Flask, stream_with_context, request, jsonify, render_template, redirect, url_for, flash, Response
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_sqlalchemy import SQLAlchemy
@@ -321,6 +323,7 @@ def stream():
     client_id = (request.args.get('client_id') or '').strip()
     
     if not client_id:
+        app.logger.warning(f"[SSE] missing client_id from {request.remote_addr} UA={request.user_agent}")
         return "missing client_id", 400
 
     # Track connection
@@ -1382,6 +1385,20 @@ def create_app():
 
 # Initialize Flask-Migrate
 migrate = Migrate(app, db)
+
+def _start_heartbeat_cleanup_thread():
+    def _loop():
+        while True:
+            try:
+                cleanup_old_heartbeats()
+            except Exception as e:
+                app.logger.error(f"Heartbeat cleanup error: {e}")
+            time.sleep(30)  # run every 30s
+    t = threading.Thread(target=_loop, daemon=True)
+    t.start()
+
+_start_heartbeat_cleanup_thread()
+
 
 if __name__ == '__main__':
     init_db()
