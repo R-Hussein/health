@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+
+{% block title %}Create User - Healthcare System{% endblock %}
+
+{% block content %}
+<h2>Create New Nurse User</h2>
+<form method="POST" action="{{ url_for('create_user') }}">
+    <div>
+        <label for="cpr">CPR:</label>
+        <input type="text" id="cpr" name="cpr" required>
+    </div>
+    <div>
+        <label for="name">Name:</label>
+        <input type="text" id="name" name="name" required>
+    </div>
+    <div>
+        <label for="phone">Phone:</label>
+        <input type="text" id="phone" name="phone">
+    </div>
+    <div>
+        <label for="municipality">Municipality:</label>
+        <input type="text" id="municipality" name="municipality" required>
+    </div>
+    <div>
+        <label for="password">Password:</label>
+        <input type="password" id="password" name="password" required minlength="4">
+    </div>
+    <div>
+        <input type="checkbox" id="is_admin" name="is_admin">
+        <label for="is_admin">Admin User</label>
+    </div>
+    <button type="submit">Create User</button>
+</form>
+{% endblock %}

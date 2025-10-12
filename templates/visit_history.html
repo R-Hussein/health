@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% block title %}Visit History - {{ client.name }}{% endblock %}
+
+{% block content %}
+<h2>Visit History for {{ client.name }}</h2>
+<a href="{{ url_for('client_detail', client_id=client.id) }}" class="btn btn-secondary">
+    Back to Client Details
+</a>
+
+<div class="section">
+    <table class="visit-table">
+        <tr>
+            <th>Date</th>
+            <th>Time</th>
+            <th>Nurse</th>
+            <th>Notes</th>
+            <th>Next Visit</th>
+        </tr>
+        {% for visit in visits %}
+        <tr>
+            <td>{{ visit.date }}</td>
+            <td>{{ visit.time }}</td>
+            <td>{{ visit.nurse_name }}</td>
+            <td>{{ visit.notes }}</td>
+            <td>{{ visit.next_visit_date or '-' }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+</div>
+
+<style>
+.visit-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+}
+.visit-table th {
+    background-color: #f2f2f2;
+    padding: 12px;
+    text-align: left;
+}
+.visit-table td {
+    padding: 12px;
+    border-bottom: 1px solid #ddd;
+}
+</style>
+{% endblock %}

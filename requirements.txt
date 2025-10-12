@@ -1,0 +1,12 @@
+flask==2.3.3
+flask-sqlalchemy==3.0.5
+flask-login==0.6.3
+flask-migrate==4.0.5
+flask-wtf==1.1.1
+flask-socketio==5.3.6
+werkzeug==2.3.7
+python-dotenv==1.0.0
+gunicorn==21.2.0
+eventlet==0.33.3
+flask-cors==4.0.0
+psycopg2-binary==2.9.7
