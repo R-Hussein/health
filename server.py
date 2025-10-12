@@ -22,7 +22,12 @@ app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:/
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'your-secret-key-here')
 app.config['CAMERA_STREAM_URL'] = 'http://192.168.0.102:81/stream'
-
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'pool_recycle': 300,
+    'pool_pre_ping': True,
+    'pool_size': 10,
+    'max_overflow': 20,
+}
 message_queues = defaultdict(lambda: deque(maxlen=200))
 connected_clients = defaultdict(list)
 sse_clients = []
@@ -228,17 +233,17 @@ def cleanup_old_heartbeats():
 def get_client_medicines_public(client_cpr):
     """Public endpoint for clients to get their own medicines"""
     try:
-        print(f"📋 [SERVER] Public medicine request for CPR: {client_cpr}")
+        app.logger.info(f"📋 Medicine request for CPR: {client_cpr}")
         
         # Find client by CPR
         client = Client.query.filter_by(cpr=client_cpr).first()
         if not client:
-            print(f"❌ [SERVER] Client not found with CPR: {client_cpr}")
+            app.logger.warning(f"❌ Client not found: {client_cpr}")
             return jsonify({'status': 'error', 'message': 'Client not found'}), 404
         
         # Get medicines for this client
         medicines = Medicine.query.filter_by(client_id=client.id).all()
-        print(f"✅ [SERVER] Serving {len(medicines)} medicines for client {client_cpr}")
+        app.logger.info(f"✅ Serving {len(medicines)} medicines for {client_cpr}")
         
         medicine_list = []
         for med in medicines:
@@ -252,7 +257,6 @@ def get_client_medicines_public(client_cpr):
                 'times': med.get_times_list()
             }
             medicine_list.append(medicine_data)
-            print(f"   - {med.name} (Active: {med.active})")
         
         return jsonify({
             'status': 'success',
@@ -262,10 +266,18 @@ def get_client_medicines_public(client_cpr):
         })
         
     except Exception as e:
-        print(f"🔴 [SERVER] Error in public medicine endpoint: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        app.logger.error(f"🔴 Error in medicine endpoint: {str(e)}")
+        return jsonify({'status': 'error', 'message': 'Internal server error'}), 500
+
+@app.route('/health')
+def health_check():
+    """Simple health check endpoint"""
+    try:
+        # Test database connection
+        db.session.execute('SELECT 1')
+        return jsonify({'status': 'healthy', 'database': 'connected'})
+    except Exception as e:
+        return jsonify({'status': 'unhealthy', 'error': str(e)}), 500
 
 
 # Login Manager
@@ -293,34 +305,41 @@ def handle_client_hello(data):
 @app.route('/stream')
 def stream():
     client_id = (request.args.get('client_id') or '').strip()
-    app.logger.info(f"[SSE] client connected to /stream id='{client_id}'")
+    
+    # Better validation for client_id
     if not client_id:
+        app.logger.warning(f"[SSE] Missing client_id from {request.remote_addr}")
         return "missing client_id", 400
+
+    app.logger.info(f"[SSE] client connected to /stream id='{client_id}'")
 
     @stream_with_context
     def event_stream():
-        # ✨ Send something immediately so headers flush and the ESP32 sees a response
-        yield ": connected\n\n"
-
+        # Send connection confirmation
+        yield f"data: {json.dumps({'type': 'connected', 'client_id': client_id})}\n\n"
+        
         last_keep = time.time()
         while True:
-            q = message_queues[client_id]
-            if q:
-                msg = q.popleft()
-                yield f"data: {json.dumps(msg)}\n\n"
-                last_keep = time.time()
-            else:
-                # periodic keepalive so intermediaries don't close the connection
-                if time.time() - last_keep > 15:
-                    yield ": keepalive\n\n"
+            try:
+                q = message_queues[client_id]
+                if q:
+                    msg = q.popleft()
+                    yield f"data: {json.dumps(msg)}\n\n"
                     last_keep = time.time()
-                time.sleep(0.5)
+                else:
+                    # Send keepalive every 30 seconds
+                    if time.time() - last_keep > 30:
+                        yield ": keepalive\n\n"
+                        last_keep = time.time()
+                    time.sleep(1)  # Reduced from 0.5 to 1 second
+            except Exception as e:
+                app.logger.error(f"[SSE] Error in event_stream: {e}")
+                break
 
     headers = {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         "Connection": "keep-alive",
-        # Prevent proxy buffering (nginx, etc.)
         "X-Accel-Buffering": "no",
     }
     return Response(event_stream(), headers=headers)
