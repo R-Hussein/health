@@ -41,14 +41,14 @@ class Nurse(UserMixin, db.Model):
     name = db.Column(db.String(100))
     phone_number = db.Column(db.String(20))
     municipality = db.Column(db.String(100))
-    password = db.Column(db.String(100))
+    password = db.Column(db.String(255))
     is_admin = db.Column(db.Boolean, default=False)
 
 class Client(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     cpr = db.Column(db.String(20), unique=True)
     name = db.Column(db.String(100))
-    address = db.Column(db.String(200))
+    address = db.Column(db.String(255))
     doctor_name = db.Column(db.String(100))
     clinic_id = db.Column(db.String(50))
     municipality = db.Column(db.String(100))
