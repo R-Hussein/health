@@ -215,7 +215,7 @@ def client_heartbeat():
                 address=data.get('address') or '',
                 doctor_name=data.get('doctor_name') or '',
                 clinic_id=data.get('clinic_id') or '',
-                municipality=(data.get('municipality') or 'all'),  # 'all' ensures admins see it
+                municipality=(data.get('municipality') or ''),  # 'all' ensures admins see it
                 emergency_info=data.get('emergency_info') or '',
                 psychological_info=data.get('psychological_info') or '',
                 last_updated=datetime.now()
