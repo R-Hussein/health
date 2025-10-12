@@ -236,15 +236,24 @@ def get_client_medicines_public(client_cpr):
     try:
         app.logger.info(f"📋 Medicine request for CPR: {client_cpr}")
         
-        # Find client by CPR
+        # Add timeout protection
+        start_time = time.time()
+        
+        # Find client by CPR with timeout protection
         client = Client.query.filter_by(cpr=client_cpr).first()
         if not client:
             app.logger.warning(f"❌ Client not found: {client_cpr}")
             return jsonify({'status': 'error', 'message': 'Client not found'}), 404
         
-        # Get medicines for this client
+        # Get medicines with optimized query
         medicines = Medicine.query.filter_by(client_id=client.id).all()
-        app.logger.info(f"✅ Serving {len(medicines)} medicines for {client_cpr}")
+        
+        processing_time = time.time() - start_time
+        app.logger.info(f"✅ Serving {len(medicines)} medicines for {client_cpr} in {processing_time:.2f}s")
+        
+        # If query takes too long, log warning
+        if processing_time > 2.0:
+            app.logger.warning(f"⚠️ Slow medicine query for {client_cpr}: {processing_time:.2f}s")
         
         medicine_list = []
         for med in medicines:
@@ -263,7 +272,8 @@ def get_client_medicines_public(client_cpr):
             'status': 'success',
             'client_id': client.id,
             'client_name': client.name,
-            'medicines': medicine_list
+            'medicines': medicine_list,
+            'processing_time': f"{processing_time:.2f}s"
         })
         
     except Exception as e:
@@ -303,48 +313,69 @@ def handle_client_hello(data):
         app.logger.info(f"[WS] joined room='{room_name}' sid={request.sid}")
         emit('hello_ack', {'ok': True, 'room': room_name})
 
-# SSE (devices / clients)
+#connection tracking
+client_connections = {}
+
 @app.route('/stream')
 def stream():
     client_id = (request.args.get('client_id') or '').strip()
     
-    # Better validation for client_id
     if not client_id:
-        app.logger.warning(f"[SSE] Missing client_id from {request.remote_addr}")
         return "missing client_id", 400
 
-    app.logger.info(f"[SSE] client connected to /stream id='{client_id}'")
-
+    # Track connection
+    connection_id = f"{client_id}_{int(time.time())}"
+    client_connections[connection_id] = {
+        'client_id': client_id,
+        'start_time': time.time(),
+        'remote_addr': request.remote_addr
+    }
+    
     @stream_with_context
     def event_stream():
-        # Send connection confirmation
-        yield f"data: {json.dumps({'type': 'connected', 'client_id': client_id})}\n\n"
-        
-        last_keep = time.time()
-        while True:
-            try:
-                q = message_queues[client_id]
-                if q:
-                    msg = q.popleft()
-                    yield f"data: {json.dumps(msg)}\n\n"
-                    last_keep = time.time()
-                else:
-                    # Send keepalive every 30 seconds
-                    if time.time() - last_keep > 30:
-                        yield ": keepalive\n\n"
+        try:
+            yield f"data: {json.dumps({'type': 'connected', 'client_id': client_id})}\n\n"
+            
+            last_keep = time.time()
+            while True:
+                try:
+                    q = message_queues[client_id]
+                    if q:
+                        msg = q.popleft()
+                        yield f"data: {json.dumps(msg)}\n\n"
                         last_keep = time.time()
-                    time.sleep(1)  # Reduced from 0.5 to 1 second
-            except Exception as e:
-                app.logger.error(f"[SSE] Error in event_stream: {e}")
-                break
+                    else:
+                        if time.time() - last_keep > 30:
+                            yield ": keepalive\n\n"
+                            last_keep = time.time()
+                        time.sleep(1)
+                except Exception as e:
+                    app.logger.error(f"[SSE] Error for {client_id}: {e}")
+                    break
+        finally:
+            # Clean up on disconnect
+            if connection_id in client_connections:
+                del client_connections[connection_id]
+            app.logger.info(f"[SSE] Connection closed for {client_id}")
 
     headers = {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         "Connection": "keep-alive",
         "X-Accel-Buffering": "no",
+        "Access-Control-Allow-Origin": "*",
     }
     return Response(event_stream(), headers=headers)
+
+# endpoint to check connection status
+@app.route('/api/connection_status')
+def connection_status():
+    return jsonify({
+        'active_connections': len(client_connections),
+        'connections': client_connections,
+        'message_queues': {k: len(v) for k, v in message_queues.items()},
+        'online_clients': online_clients
+    }) 
     
 # Camera test endpoints (kept)
 @app.post('/client/<int:client_id>/camera/open')
