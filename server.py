@@ -198,20 +198,53 @@ def handle_client_offline(data):
 # Update the heartbeat endpoint to also emit WebSocket events
 @app.route('/api/client_heartbeat', methods=['POST'])
 def client_heartbeat():
-    """Client sends heartbeat to indicate they're online"""
-    data = request.json
-    if data and 'client_id' in data:
-        client_cpr = data['client_id']
-        was_online = client_cpr in online_clients
-        online_clients[client_cpr] = time.time()
-        
-        # Only emit if status changed
-        if not was_online:
-            print(f"💚 Heartbeat: Client {client_cpr} came online")
-            socketio.emit('client_status_update', {
-                'client_cpr': client_cpr,
-                'status': 'online'
-            })
+    """Client sends heartbeat to indicate they're online. Also upsert Client."""
+    data = request.json or {}
+    client_cpr = (data.get('client_id') or '').strip()
+    if not client_cpr:
+        return jsonify({'status': 'error', 'message': 'missing client_id'}), 400
+
+    # --- UPSERT minimal Client so dashboard can list it right away ---
+    try:
+        client = Client.query.filter_by(cpr=client_cpr).first()
+        if not client:
+            # Try to capture optional fields from heartbeat payload
+            client = Client(
+                cpr=client_cpr,
+                name=data.get('name') or client_cpr,
+                address=data.get('address') or '',
+                doctor_name=data.get('doctor_name') or '',
+                clinic_id=data.get('clinic_id') or '',
+                municipality=(data.get('municipality') or 'all'),  # 'all' ensures admins see it
+                emergency_info=data.get('emergency_info') or '',
+                psychological_info=data.get('psychological_info') or '',
+                last_updated=datetime.now()
+            )
+            db.session.add(client)
+            db.session.commit()
+        else:
+            # Keep it fresh (and allow municipality/name to be filled if sent later)
+            changed = False
+            if data.get('municipality') and client.municipality != data['municipality']:
+                client.municipality = data['municipality']; changed = True
+            if data.get('name') and client.name != data['name']:
+                client.name = data['name']; changed = True
+            if changed:
+                client.last_updated = datetime.now()
+                db.session.commit()
+    except Exception as e:
+        app.logger.error(f"Heartbeat upsert error for {client_cpr}: {e}")
+
+    # --- Online status bookkeeping + broadcast on first seen ---
+    was_online = client_cpr in online_clients
+    online_clients[client_cpr] = time.time()
+    if not was_online:
+        print(f"💚 Heartbeat: Client {client_cpr} came online")
+        socketio.emit('client_status_update', {
+            'client_cpr': client_cpr,
+            'status': 'online'
+        })
+
     return jsonify({'status': 'success'})
 
 # Update the cleanup function to emit offline events
