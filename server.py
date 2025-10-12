@@ -195,57 +195,59 @@ def handle_client_offline(data):
             'status': 'offline'
         })
 
-# Update the heartbeat endpoint to also emit WebSocket events
 @app.route('/api/client_heartbeat', methods=['POST'])
 def client_heartbeat():
-    """Client sends heartbeat to indicate they're online. Also upsert Client."""
+    """Client sends heartbeat to indicate they're online; safely upsert client."""
     data = request.json or {}
     client_cpr = (data.get('client_id') or '').strip()
     if not client_cpr:
         return jsonify({'status': 'error', 'message': 'missing client_id'}), 400
 
-    # --- UPSERT minimal Client so dashboard can list it right away ---
+    name         = (data.get('name') or '').strip()
+    municipality = (data.get('municipality') or '').strip()  # may be ''
+    if municipality.lower() == 'all':
+        # "all" is reserved for Nurses/admin filters; don't persist it on Clients
+        municipality = ''
+
     try:
         client = Client.query.filter_by(cpr=client_cpr).first()
         if not client:
-            # Try to capture optional fields from heartbeat payload
             client = Client(
                 cpr=client_cpr,
-                name=data.get('name') or client_cpr,
-                address=data.get('address') or '',
-                doctor_name=data.get('doctor_name') or '',
-                clinic_id=data.get('clinic_id') or '',
-                municipality=(data.get('municipality') or ''),  # 'all' ensures admins see it
-                emergency_info=data.get('emergency_info') or '',
-                psychological_info=data.get('psychological_info') or '',
-                last_updated=datetime.now()
+                name=name or client_cpr,
+                municipality=municipality,   # '' okay; can be filled later
+                last_updated=datetime.now(),
+                ip_address=request.remote_addr
             )
             db.session.add(client)
             db.session.commit()
         else:
-            # Keep it fresh (and allow municipality/name to be filled if sent later)
             changed = False
-            if data.get('municipality') and client.municipality != data['municipality']:
-                client.municipality = data['municipality']; changed = True
-            if data.get('name') and client.name != data['name']:
-                client.name = data['name']; changed = True
+            # Only update name if provided and different
+            if name and name != client.name:
+                client.name = name
+                changed = True
+            # Only update municipality if provided AND not "all"
+            if municipality and municipality != client.municipality:
+                client.municipality = municipality
+                changed = True
             if changed:
                 client.last_updated = datetime.now()
                 db.session.commit()
     except Exception as e:
         app.logger.error(f"Heartbeat upsert error for {client_cpr}: {e}")
 
-    # --- Online status bookkeeping + broadcast on first seen ---
+    # Maintain online status + notify dashboards on first seen
     was_online = client_cpr in online_clients
     online_clients[client_cpr] = time.time()
     if not was_online:
-        print(f"💚 Heartbeat: Client {client_cpr} came online")
         socketio.emit('client_status_update', {
             'client_cpr': client_cpr,
             'status': 'online'
         })
 
     return jsonify({'status': 'success'})
+
 
 # Update the cleanup function to emit offline events
 def cleanup_old_heartbeats():
@@ -571,7 +573,10 @@ def full_sync():
     try:
         data = request.json
         client_cpr = data['user']['cpr']
-        
+        _muni = (data['user'].get('municipality', '') or '').strip()
+        if _muni.lower() == 'all':
+            _muni = ''  # "all" is reserved for nurse filter, never store on Client
+
         client = Client.query.filter_by(cpr=client_cpr).first()
         if not client:
             client = Client(
@@ -580,7 +585,7 @@ def full_sync():
                 address=data['user'].get('address', ''),
                 doctor_name=data['user'].get('doctor_name', ''),
                 clinic_id=data['user'].get('clinic_id', ''),
-                municipality=data['user'].get('municipality', ''),
+                municipality=_muni,
                 emergency_info=data['user'].get('emergency_info', ''),
                 psychological_info=data['user'].get('psychological_info', ''),
                 last_updated=datetime.now()
@@ -654,7 +659,12 @@ def sync_changes():
         data = request.json
         if not data or 'user' not in data or 'changes' not in data:
             return jsonify({'status': 'error', 'message': 'Invalid data'}), 400
+        
+        _muni = (data['user'].get('municipality', '') or '').strip()
+        if _muni.lower() == 'all':
+            _muni = ''  # "all" is reserved for nurse filter, never store on Client
 
+        
         client_cpr = data['user']['cpr']
         client = Client.query.filter_by(cpr=client_cpr).first()
         
@@ -665,7 +675,7 @@ def sync_changes():
                 address=data['user'].get('address', ''),
                 doctor_name=data['user'].get('doctor_name', ''),
                 clinic_id=data['user'].get('clinic_id', ''),
-                municipality=data['user'].get('municipality', ''),
+                municipality=_muni,
                 emergency_info=data['user'].get('emergency_info', ''),
                 psychological_info=data['user'].get('psychological_info', ''),
                 last_updated=datetime.now(),
@@ -1114,6 +1124,7 @@ def edit_client(client_id):
     if request.method == 'POST':
         client.name = request.form.get('name', client.name)
         client.address = request.form.get('address', client.address)
+        client.municipality = request.form.get('municipality', client.municipality)
         client.doctor_name = request.form.get('doctor_name', client.doctor_name)
         client.clinic_id = request.form.get('clinic_id', client.clinic_id)
         client.emergency_info = request.form.get('emergency_info', client.emergency_info)
