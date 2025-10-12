@@ -13,6 +13,7 @@ import time
 import json
 import os
 from collections import defaultdict, deque
+from sqlalchemy import text  
 import logging, re
 logging.basicConfig(level=logging.INFO)
 
@@ -269,16 +270,17 @@ def get_client_medicines_public(client_cpr):
         app.logger.error(f"🔴 Error in medicine endpoint: {str(e)}")
         return jsonify({'status': 'error', 'message': 'Internal server error'}), 500
 
+
 @app.route('/health')
 def health_check():
     """Simple health check endpoint"""
     try:
-        # Test database connection
-        db.session.execute('SELECT 1')
+        # Test database connection with explicit text()
+        db.session.execute(text('SELECT 1'))
         return jsonify({'status': 'healthy', 'database': 'connected'})
     except Exception as e:
+        app.logger.error(f"Health check failed: {e}")
         return jsonify({'status': 'unhealthy', 'error': str(e)}), 500
-
 
 # Login Manager
 @login_manager.user_loader
