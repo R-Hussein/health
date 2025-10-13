@@ -506,20 +506,22 @@ def test_camera(client_id):
         return jsonify({'error': 'No camera URL configured'})
     
     try:
-        import requests
-        response = requests.get(stream_url, timeout=5)
+        from urllib.request import urlopen
+        # Try to open the stream for just 3 seconds to test connectivity
+        response = urlopen(stream_url, timeout=3)
         return jsonify({
-            'status': 'success' if response.status_code == 200 else 'failed',
-            'status_code': response.status_code,
-            'stream_url': stream_url
+            'status': 'success',
+            'stream_url': stream_url,
+            'content_type': response.headers.get('Content-Type', 'Unknown')
         })
     except Exception as e:
         return jsonify({
             'error': str(e),
-            'stream_url': stream_url
+            'stream_url': stream_url,
+            'note': 'Camera might not be accessible from this server'
         })
-
-
+        
+        
 # Notifications (unchanged)
 @app.route('/api/notification', methods=['POST'])
 def receive_notification():
