@@ -18,6 +18,7 @@ import urllib.request
 import io
 from collections import defaultdict, deque
 from sqlalchemy import text  
+from werkzeug.exceptions import BadRequest
 import logging, re
 logging.basicConfig(level=logging.INFO)
 
@@ -581,63 +582,108 @@ def client_mjpeg(client_id):
 
 ##
 # --- MJPEG PUSH from device (one long POST) ---
+# --- Robust MJPEG PUSH from device (multipart/x-mixed-replace) ---
 @app.post("/api/clients/<client_id>/camera/mjpeg_push")
 def api_camera_mjpeg_push(client_id):
-    _check_token()  # if you enabled CAM_TOKEN
+    # Optional token check (only if CAM_TOKEN set)
+    _check_token()
 
-    # We read the raw request stream and extract parts by boundary
-    ctype = request.headers.get("Content-Type","")
+    ctype = request.headers.get("Content-Type", "")
     if "multipart/x-mixed-replace" not in ctype:
-        abort(400, description="Expect multipart/x-mixed-replace")
+        raise BadRequest("Expect Content-Type: multipart/x-mixed-replace")
 
-    # extract boundary
-    import re
+    # Extract boundary
+    import re, time
     m = re.search(r'boundary="?([^";]+)"?', ctype)
     if not m:
-        abort(400, description="Missing boundary")
-    boundary = m.group(1).encode()
+        raise BadRequest("Missing boundary")
+    boundary = m.group(1)
+    b_boundary = ("--" + boundary).encode("ascii")
 
-    def readlines():
-        while True:
-            chunk = request.stream.readline()
+    # We'll read from the already-decoded input stream:
+    stream = request.stream  # Werkzeug decodes chunked TE for us
+
+    def readline():
+        # Read a line ending with \n (binary-safe for headers)
+        line = stream.readline()
+        if not line:
+            return b""
+        return line
+
+    def read_exact(n):
+        # Read exactly n bytes (binary-safe for JPEG)
+        buf = bytearray()
+        while len(buf) < n:
+            chunk = stream.read(n - len(buf))
             if not chunk:
                 break
-            yield chunk
+            buf.extend(chunk)
+        return bytes(buf)
 
-    # simple state machine for parts
-    hdrs = {}
-    buf = bytearray()
-    sep = b"--" + boundary
-    sep_crlf = b"--" + boundary + b"\r\n"
+    # We loop over parts: boundary -> headers -> blank line -> body (JPEG)
+    # We ignore the very first preamble up to the first boundary
+    # Consume until first boundary
+    while True:
+        line = readline()
+        if not line:
+            return {"ok": False, "msg": "client closed before first boundary"}
+        if line.strip().startswith(b_boundary):
+            break
 
-    for line in readlines():
-        if line.startswith(sep):
-            # commit previous part
-            if buf:
-                CAM_FRAMES[client_id]["bytes"] = bytes(buf)
-                CAM_FRAMES[client_id]["ts"] = time.time()
-                buf.clear()
-            hdrs.clear()
-            continue
-        # header or blank line
-        if not buf and line.strip():
-            # header line
-            k, _, v = line.decode(errors="ignore").partition(":")
-            hdrs[k.lower().strip()] = v.strip()
-            continue
-        if not buf and line in (b"\r\n", b"\n"):
-            # end headers; next is body
-            continue
-        # body bytes
-        buf.extend(line)
+    # Now consume parts until client disconnects
+    while True:
+        # Collect headers
+        headers = {}
+        while True:
+            line = readline()
+            if not line:
+                # client ended connection
+                return {"ok": True}
+            if line in (b"\r\n", b"\n"):
+                break  # end of headers
+            # header parsing
+            try:
+                k, v = line.decode("latin-1").split(":", 1)
+                headers[k.strip().lower()] = v.strip()
+            except ValueError:
+                # ignore malformed header lines
+                continue
 
-    # final commit if any
-    if buf:
-        CAM_FRAMES[client_id]["bytes"] = bytes(buf)
+        # Determine content length for this part
+        clen = headers.get("content-length")
+        if not clen:
+            # Some cameras omit it; we COULD scan until next boundary,
+            # but for robustness we require Content-Length.
+            # ESP sketch below ensures it's present.
+            raise BadRequest("Part missing Content-Length")
+
+        try:
+            n = int(clen)
+        except ValueError:
+            raise BadRequest("Invalid Content-Length")
+
+        # Read exactly n bytes (JPEG)
+        jpeg_bytes = read_exact(n)
+        if len(jpeg_bytes) != n:
+            return {"ok": False, "msg": "short read from client"}
+
+        # Update the latest frame for this client
+        CAM_FRAMES[client_id]["bytes"] = jpeg_bytes
         CAM_FRAMES[client_id]["ts"] = time.time()
 
-    return {"ok": True}
-
+        # After body, the stream should have a trailing CRLF before next boundary
+        # Consume the trailing CRLF (if present)
+        _trail = readline()
+        # Next line should be a boundary or end boundary; if not, loop keeps reading
+        while True:
+            if _trail.strip().startswith(b_boundary):
+                # Found next boundary; proceed to next part
+                break
+            if not _trail:
+                # connection ended
+                return {"ok": True}
+            # If it's not boundary yet (unlikely), keep reading lines until boundary
+            _trail = readline()
 
 ###
 @app.route('/camera_proxy/<int:client_id>')
