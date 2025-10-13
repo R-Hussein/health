@@ -426,24 +426,21 @@ def camera_open(client_id):
     if client.municipality != current_user.municipality and not current_user.is_admin:
         return jsonify({'status':'error','message':'Access denied'}), 403
 
-    stream_url = camera_stream_url(client.camera_url)
-    if not stream_url:
-        return jsonify({'status':'error','message':'Camera URL not set for this client'}), 400
-
+    # enqueue servo to 180 (unchanged)
     message_queues[client.cpr].append({
         'type': 'servo_set',
         'target': client.cpr,
         'angle': 180,
         'ts': datetime.utcnow().isoformat()
     })
-    
-    # Return the PROXY URL instead of direct camera URL
-    proxy_url = url_for('camera_proxy', client_id=client.id, _external=True)
-    
     app.logger.info(f"[SSE] queued servo_set(180) for '{client.cpr}'")
-    app.logger.info(f"[CAMERA] Using proxy URL: {proxy_url} for camera: {stream_url}")
-    
-    return jsonify({'ok': True, 'stream_url': proxy_url})
+
+    # IMPORTANT: return the in-memory MJPEG endpoint (client push model),
+    # so the browser will only show video after "Open" is clicked.
+    stream_url = url_for('client_mjpeg', client_id=(client.cpr or client.id), _external=True)
+    app.logger.info(f"[CAMERA] Open → returning MJPEG URL: {stream_url}")
+    return jsonify({'ok': True, 'stream_url': stream_url})
+
 
 @app.post('/client/<int:client_id>/camera/close')
 @login_required
