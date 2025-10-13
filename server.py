@@ -495,6 +495,31 @@ def set_csrf_cookie(resp):
     resp.set_cookie('csrf_token', generate_csrf(), samesite='Lax')
     return resp
 
+# camera test endpoint
+@app.route('/test_camera/<int:client_id>')
+@login_required
+def test_camera(client_id):
+    client = Client.query.get_or_404(client_id)
+    stream_url = camera_stream_url(client.camera_url)
+    
+    if not stream_url:
+        return jsonify({'error': 'No camera URL configured'})
+    
+    try:
+        import requests
+        response = requests.get(stream_url, timeout=5)
+        return jsonify({
+            'status': 'success' if response.status_code == 200 else 'failed',
+            'status_code': response.status_code,
+            'stream_url': stream_url
+        })
+    except Exception as e:
+        return jsonify({
+            'error': str(e),
+            'stream_url': stream_url
+        })
+
+
 # Notifications (unchanged)
 @app.route('/api/notification', methods=['POST'])
 def receive_notification():
