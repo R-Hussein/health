@@ -165,8 +165,8 @@ def camera_stream_url(raw: str | None) -> str | None:
         netloc = f"{p.hostname}:{p.port}"
     else:
         netloc = f"{p.hostname}:81"
-   #  return urlunparse((p.scheme, netloc, '/stream', '', '', ''))
-    return raw.strip()
+    return urlunparse((p.scheme, netloc, '/stream', '', '', ''))
+    #return raw.strip()
 # Online clients tracking
 online_clients = {}  # {client_cpr: last_heartbeat_timestamp}
 
