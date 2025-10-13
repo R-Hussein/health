@@ -739,7 +739,6 @@ def sync_changes():
         db.session.rollback()
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-# Add these routes after the existing medicine endpoints
 
 # Server-side medicine management page
 @app.route('/client/<int:client_id>/manage_medicines')
@@ -754,6 +753,37 @@ def manage_client_medicines(client_id):
     return render_template('manage_medicines.html', 
                          client=client, 
                          medicines=medicines)
+
+# --- DELETE CLIENT (with cascade-like cleanup) ---
+@app.post('/client/<int:client_id>/delete')
+@login_required
+def delete_client(client_id):
+    client = Client.query.get_or_404(client_id)
+
+    # Access control: same municipality or admin
+    if client.municipality != current_user.municipality and not current_user.is_admin:
+        flash("Access denied", "error")
+        return redirect(url_for('dashboard'))
+
+    try:
+        # Remove related data first (FKs aren't declared with cascade here)
+        Medicine.query.filter_by(client_id=client.id).delete()
+        MedTime.query.filter_by(client_id=client.id).delete()
+        Reminder.query.filter_by(client_id=client.id).delete()
+        Notification.query.filter_by(client_id=client.id).delete()
+        Visit.query.filter_by(client_id=client.id).delete()
+
+        # Finally remove the client
+        db.session.delete(client)
+        db.session.commit()
+        flash("Client deleted successfully.", "success")
+    except Exception as e:
+        db.session.rollback()
+        flash(f"Error deleting client: {e}", "error")
+
+    return redirect(url_for('dashboard'))
+
+
 
 # Add medicine from server UI
 @app.route('/client/<int:client_id>/medicines/add', methods=['GET', 'POST'])
