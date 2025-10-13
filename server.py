@@ -14,6 +14,8 @@ import threading
 import time
 import json
 import os
+import urllib.request
+import io
 from collections import defaultdict, deque
 from sqlalchemy import text  
 import logging, re
@@ -415,7 +417,7 @@ def connection_status():
         'online_clients': online_clients
     }) 
     
-# Camera test endpoints (kept)
+# Camera test endpoints
 @app.post('/client/<int:client_id>/camera/open')
 @login_required
 def camera_open(client_id):
@@ -433,8 +435,14 @@ def camera_open(client_id):
         'angle': 180,
         'ts': datetime.utcnow().isoformat()
     })
-    app.logger.info(f"[SSE] queued servo_set(180) for '{client.cpr}'  qlen={len(message_queues[client.cpr])}")
-    return jsonify({'ok': True, 'stream_url': stream_url})
+    
+    # Return the PROXY URL instead of direct camera URL
+    proxy_url = url_for('camera_proxy', client_id=client.id, _external=True)
+    
+    app.logger.info(f"[SSE] queued servo_set(180) for '{client.cpr}'")
+    app.logger.info(f"[CAMERA] Using proxy URL: {proxy_url} for camera: {stream_url}")
+    
+    return jsonify({'ok': True, 'stream_url': proxy_url})
 
 @app.post('/client/<int:client_id>/camera/close')
 @login_required
@@ -442,16 +450,18 @@ def camera_close(client_id):
     client = Client.query.get_or_404(client_id)
     if client.municipality != current_user.municipality and not current_user.is_admin:
         return jsonify({'status':'error','message':'Access denied'}), 403
+    
     message_queues[client.cpr].append({
         'type': 'servo_set',
         'target': client.cpr,
         'angle': 0,
         'ts': datetime.utcnow().isoformat()
     })
-    app.logger.info(f"[SSE] queued servo_set(0) for '{client.cpr}'  qlen={len(message_queues[client.cpr])}")
+    
+    app.logger.info(f"[SSE] queued servo_set(0) for '{client.cpr}'")
     return jsonify({'ok': True})
 
-# ✅ NEW: Lock control endpoints (no timer) — targets client.device_name
+# Lock control endpoints (no timer) — targets client.device_name
 @app.post('/client/<int:client_id>/lock/open')
 @login_required
 def lock_open(client_id):
@@ -494,6 +504,55 @@ def lock_close(client_id):
 def set_csrf_cookie(resp):
     resp.set_cookie('csrf_token', generate_csrf(), samesite='Lax')
     return resp
+
+@app.route('/camera_proxy/<int:client_id>')
+@login_required
+def camera_proxy(client_id):
+    client = Client.query.get_or_404(client_id)
+    if client.municipality != current_user.municipality and not current_user.is_admin:
+        return "Access denied", 403
+    
+    stream_url = camera_stream_url(client.camera_url)
+    if not stream_url:
+        return "No camera URL", 400
+    
+    try:
+        # Set a user-agent to avoid blocking
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        req = urllib.request.Request(stream_url, headers=headers)
+        
+        # Increase timeout for slow connections
+        response = urllib.request.urlopen(req, timeout=10)
+        
+        def generate():
+            try:
+                while True:
+                    chunk = response.read(4096)  # Larger chunks for better performance
+                    if not chunk:
+                        break
+                    yield chunk
+            except Exception as e:
+                app.logger.error(f"Proxy stream error: {e}")
+            finally:
+                try:
+                    response.close()
+                except:
+                    pass
+        
+        return Response(
+            generate(),
+            content_type=response.headers.get('Content-Type', 'multipart/x-mixed-replace'),
+            headers={
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive'
+            }
+        )
+        
+    except Exception as e:
+        app.logger.error(f"Camera proxy error for {stream_url}: {e}")
+        return f"Camera proxy error: {str(e)}", 500
 
 # camera test endpoint
 @app.route('/test_camera/<int:client_id>')
