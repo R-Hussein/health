@@ -504,7 +504,82 @@ def lock_close(client_id):
 def set_csrf_cookie(resp):
     resp.set_cookie('csrf_token', generate_csrf(), samesite='Lax')
     return resp
+###
+# --- camera frame storage (in-memory) ---
+from collections import defaultdict
+import time
+from flask import Response, request, stream_with_context, abort, make_response
 
+CAM_FRAMES = defaultdict(lambda: {"bytes": None, "ts": 0.0})
+
+# Optional: simple auth token for camera uploads (set env CAM_TOKEN and send it from client)
+import os
+CAM_TOKEN = os.getenv("CAM_TOKEN", None)
+
+def _check_token():
+    if CAM_TOKEN:
+        tok = request.headers.get("X-Cam-Token")
+        if tok != CAM_TOKEN:
+            abort(401, description="Invalid camera token")
+
+# --- endpoint the client device calls to push a JPEG frame ---
+@app.post("/api/clients/<client_id>/camera/frame")
+def api_camera_frame(client_id):
+    _check_token()
+    # Accept raw bytes or multipart form 'frame'
+    if request.mimetype and "multipart/form-data" in request.mimetype:
+        file = request.files.get("frame")
+        if not file:
+            abort(400, description="missing file 'frame'")
+        data = file.read()
+    else:
+        data = request.get_data() or b""
+    if not data:
+        abort(400, description="empty frame")
+
+    CAM_FRAMES[client_id]["bytes"] = data
+    CAM_FRAMES[client_id]["ts"] = time.time()
+    return {"ok": True, "age": 0}
+
+# --- MJPEG stream that browsers can show in <img src> ---
+@app.get("/client/<client_id>/mjpeg")
+def client_mjpeg(client_id):
+    boundary = "frame"
+    headers = {
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0",
+        # Hint reverse proxies not to buffer
+        "X-Accel-Buffering": "no",
+    }
+
+    @stream_with_context
+    def generate():
+        last_sent = 0.0
+        while True:
+            buf = CAM_FRAMES[client_id]["bytes"]
+            ts = CAM_FRAMES[client_id]["ts"]
+            # If no frame yet, sleep/yield a tiny black JPEG every ~1s
+            if buf is None:
+                time.sleep(0.2)
+                continue
+            # throttle to only push when frame changed, else repeat at ~5 fps
+            if ts > last_sent:
+                last_sent = ts
+            else:
+                time.sleep(0.2)
+            yield (b"--" + boundary.encode() + b"\r\n"
+                   b"Content-Type: image/jpeg\r\n"
+                   b"Content-Length: " + str(len(buf)).encode() + b"\r\n\r\n" +
+                   buf + b"\r\n")
+
+    resp = Response(generate(),
+                    mimetype=f"multipart/x-mixed-replace; boundary={boundary}")
+    for k, v in headers.items():
+        resp.headers[k] = v
+    return resp
+
+###
 @app.route('/camera_proxy/<int:client_id>')
 @login_required
 def camera_proxy(client_id):
