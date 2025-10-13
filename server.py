@@ -579,6 +579,66 @@ def client_mjpeg(client_id):
         resp.headers[k] = v
     return resp
 
+##
+# --- MJPEG PUSH from device (one long POST) ---
+@app.post("/api/clients/<client_id>/camera/mjpeg_push")
+def api_camera_mjpeg_push(client_id):
+    _check_token()  # if you enabled CAM_TOKEN
+
+    # We read the raw request stream and extract parts by boundary
+    ctype = request.headers.get("Content-Type","")
+    if "multipart/x-mixed-replace" not in ctype:
+        abort(400, description="Expect multipart/x-mixed-replace")
+
+    # extract boundary
+    import re
+    m = re.search(r'boundary="?([^";]+)"?', ctype)
+    if not m:
+        abort(400, description="Missing boundary")
+    boundary = m.group(1).encode()
+
+    def readlines():
+        while True:
+            chunk = request.stream.readline()
+            if not chunk:
+                break
+            yield chunk
+
+    # simple state machine for parts
+    hdrs = {}
+    buf = bytearray()
+    sep = b"--" + boundary
+    sep_crlf = b"--" + boundary + b"\r\n"
+
+    for line in readlines():
+        if line.startswith(sep):
+            # commit previous part
+            if buf:
+                CAM_FRAMES[client_id]["bytes"] = bytes(buf)
+                CAM_FRAMES[client_id]["ts"] = time.time()
+                buf.clear()
+            hdrs.clear()
+            continue
+        # header or blank line
+        if not buf and line.strip():
+            # header line
+            k, _, v = line.decode(errors="ignore").partition(":")
+            hdrs[k.lower().strip()] = v.strip()
+            continue
+        if not buf and line in (b"\r\n", b"\n"):
+            # end headers; next is body
+            continue
+        # body bytes
+        buf.extend(line)
+
+    # final commit if any
+    if buf:
+        CAM_FRAMES[client_id]["bytes"] = bytes(buf)
+        CAM_FRAMES[client_id]["ts"] = time.time()
+
+    return {"ok": True}
+
+
 ###
 @app.route('/camera_proxy/<int:client_id>')
 @login_required
