@@ -146,6 +146,15 @@ class Visit(db.Model):
     next_visit_date = db.Column(db.String(20))
     notes = db.Column(db.Text)
     
+def _can_access_client(client) -> bool:
+    # allow admins, or nurses with municipality='all', or same municipality
+    return (
+        getattr(current_user, 'is_admin', False)
+        or getattr(current_user, 'municipality', '') == 'all'
+        or client.municipality == getattr(current_user, 'municipality', '')
+    )
+
+
 def normalize_room(s: str) -> str:
     if not s:
         return ""
@@ -459,16 +468,17 @@ def camera_close(client_id):
     app.logger.info(f"[SSE] queued servo_set(0) for '{client.cpr}'")
     return jsonify({'ok': True})
 
-# Lock control endpoints (no timer) — targets client.device_name
 @app.post('/client/<int:client_id>/lock/open')
 @login_required
 def lock_open(client_id):
     client = Client.query.get_or_404(client_id)
-    if client.municipality != current_user.municipality and not current_user.is_admin:
+    if not _can_access_client(client):
         return jsonify({'status':'error','message':'Access denied'}), 403
+
     device = (client.device_name or '').strip() or (client.cpr or '').strip()
     if not device:
         return jsonify({'status':'error','message':'No device_name (or CPR) configured for this client'}), 400
+
     message_queues[device].append({
         'type': 'lock',
         'action': 'open',
@@ -478,16 +488,18 @@ def lock_open(client_id):
     app.logger.info(f"[SSE] queued lock OPEN for '{device}' qlen={len(message_queues[device])}")
     return jsonify({'ok': True})
 
+
 @app.post('/client/<int:client_id>/lock/close')
 @login_required
 def lock_close(client_id):
     client = Client.query.get_or_404(client_id)
-    # typo fixed: municipality
-    if client.municipality != current_user.municipality and not current_user.is_admin:
+    if not _can_access_client(client):
         return jsonify({'status':'error','message':'Access denied'}), 403
+
     device = (client.device_name or '').strip() or (client.cpr or '').strip()
     if not device:
         return jsonify({'status':'error','message':'No device_name (or CPR) configured for this client'}), 400
+
     message_queues[device].append({
         'type': 'lock',
         'action': 'close',
