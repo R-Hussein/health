@@ -133,29 +133,39 @@ async function closeCamera(clientId, cpr) {
 <!-- Lock Control (ESP32) -->
 <div class="section">
   <h3>Door lock</h3>
-  <button class="btn btn-success" onclick="sendLock('open')">Open</button>
-  <button class="btn btn-danger"  onclick="sendLock('close')">Close</button>
+  <button type="button" class="btn btn-success" onclick="sendLock('open')">Open</button>
+  <button type="button" class="btn btn-danger"  onclick="sendLock('close')">Close</button>
   <small id="lock-msg" style="margin-left:8px;"></small>
 </div>
 
 <script>
-async function sendLock(action){
+async function sendLock(action) {
   const url = action === 'open'
     ? "{{ url_for('lock_open',  client_id=client.id) }}"
     : "{{ url_for('lock_close', client_id=client.id) }}";
+
+  // prevent any stray form submit
+  if (window.event) { try { window.event.preventDefault(); } catch(e){} }
+
+  const el = document.getElementById('lock-msg');
   try {
     const res = await fetch(url, {
       method: 'POST',
-      credentials: 'same-origin',
+      credentials: 'same-origin',           // send session cookie for @login_required
       headers: { 'X-Requested-With': 'XMLHttpRequest' }
     });
-    const ok = res.ok;
-    document.getElementById('lock-msg').textContent =
-      ok ? `Lock ${action} sent` : `Error ${res.status}`;
-  } catch(e){
-    document.getElementById('lock-msg').textContent = 'Network error';
+    if (!res.ok) {
+      el.textContent = `Error ${res.status}`;
+      setTimeout(()=> el.textContent='', 2500);
+      return;
+    }
+    // server enqueues SSE event; device should react immediately
+    el.textContent = `Lock ${action} sent`;
+    setTimeout(()=> el.textContent='', 1500);
+  } catch (err) {
+    el.textContent = 'Network error';
+    setTimeout(()=> el.textContent='', 2500);
   }
-  setTimeout(()=>{ const el=document.getElementById('lock-msg'); if(el) el.textContent=''; }, 2500);
 }
 </script>
 
