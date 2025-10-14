@@ -133,16 +133,32 @@ async function closeCamera(clientId, cpr) {
 <!-- Lock Control (ESP32) -->
 <div class="section">
   <h3>Door lock</h3>
-  <div>
-    <form method="POST" action="{{ url_for('lock_open', client_id=client.id) }}" style="display:inline-block;margin-right:8px">
-      <button type="submit" class="btn btn-success">Open</button>
-    </form>
-
-    <form method="POST" action="{{ url_for('lock_close', client_id=client.id) }}" style="display:inline-block">
-      <button type="submit" class="btn btn-danger">Close</button>
-    </form>
-  </div>
+  <button class="btn btn-success" onclick="sendLock('open')">Open</button>
+  <button class="btn btn-danger"  onclick="sendLock('close')">Close</button>
+  <small id="lock-msg" style="margin-left:8px;"></small>
 </div>
+
+<script>
+async function sendLock(action){
+  const url = action === 'open'
+    ? "{{ url_for('lock_open',  client_id=client.id) }}"
+    : "{{ url_for('lock_close', client_id=client.id) }}";
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    });
+    const ok = res.ok;
+    document.getElementById('lock-msg').textContent =
+      ok ? `Lock ${action} sent` : `Error ${res.status}`;
+  } catch(e){
+    document.getElementById('lock-msg').textContent = 'Network error';
+  }
+  setTimeout(()=>{ const el=document.getElementById('lock-msg'); if(el) el.textContent=''; }, 2500);
+}
+</script>
+
 
 <!-- Visits section-->
 <div class="section">
