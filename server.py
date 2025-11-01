@@ -1747,10 +1747,15 @@ def _start_heartbeat_cleanup_thread():
     t = threading.Thread(target=_loop, daemon=True)
     t.start()
 
+# --- Bootstrap DB even under Gunicorn/Eventlet ---
+with app.app_context():
+    init_db()
+
+# Background job
 _start_heartbeat_cleanup_thread()
 
-
+# Local dev only (Gunicorn will import app/socketio)
 if __name__ == '__main__':
-    init_db()
     port = int(os.environ.get('PORT', 5000))
     socketio.run(app, host='0.0.0.0', port=port, debug=False)
+
