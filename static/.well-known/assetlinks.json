@@ -1,0 +1,8 @@
+[{
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "online.lifecrown.www.twa",
+        "sha256_cert_fingerprints": ["57:02:21:D8:92:62:3C:77:06:EC:64:49:C2:BE:81:50:3D:B9:CF:C7:E3:DE:ED:4D:C1:0D:A7:47:66:11:81:AC"]
+      }
+    }]
