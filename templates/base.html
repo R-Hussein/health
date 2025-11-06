@@ -2,6 +2,12 @@
 <html>
 <head>
     <title>{% block title %}Healthcare System{% endblock %}</title>
+    
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0b0b0f" />
+    <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
+    <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; }
         .navbar { background: #0078d7; padding: 10px; color: white; }
@@ -72,5 +78,10 @@
     {% endwith %}
 
     {% block content %}{% endblock %}
+    <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/service-worker.js').catch(console.error);
+    }
+    </script>
 </body>
 </html>
