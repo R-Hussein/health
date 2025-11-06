@@ -187,7 +187,11 @@ def service_worker():
     root_dir = os.path.dirname(os.path.abspath(__file__))
     return send_from_directory(root_dir, 'service-worker.js', mimetype='application/javascript')
 
-# Add near the top with other socketio events
+@app.route('/.well-known/assetlinks.json')
+def assetlinks():
+    root = os.path.join(os.path.dirname(__file__), 'static', '.well-known')
+    return send_from_directory(root, 'assetlinks.json', mimetype='application/json')
+
 @socketio.on('client_online')
 def handle_client_online(data):
     client_cpr = data.get('client_id')
