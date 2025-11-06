@@ -1,6 +1,6 @@
 import eventlet
 eventlet.monkey_patch()
-from flask import Flask, stream_with_context, request, jsonify, render_template, redirect, url_for, flash, Response
+from flask import Flask, stream_with_context, request, jsonify, render_template, redirect, url_for, flash, Response, send_from_directory
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
@@ -181,6 +181,11 @@ def camera_stream_url(raw: str | None) -> str | None:
     #return raw.strip()
 # Online clients tracking
 online_clients = {}  # {client_cpr: last_heartbeat_timestamp}
+
+@app.route('/service-worker.js')
+def service_worker():
+    root_dir = os.path.dirname(os.path.abspath(__file__))
+    return send_from_directory(root_dir, 'service-worker.js', mimetype='application/javascript')
 
 # Add near the top with other socketio events
 @socketio.on('client_online')
